@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="manifest" href="manifest.json">
+    
+    <title>韓国語単語帳 Pro</title>
+    <style>
+        /* 前回のスタイルを維持しつつ、全画面で見やすいように微調整 */
+        :root { --sidebar-width: 200px; --primary-color: #4a90e2; --bg-color: #f0f2f5; }
+        body { margin: 0; font-family: sans-serif; display: flex; height: 100vh; background-color: var(--bg-color); overflow: hidden; }
+        
+        .sidebar { width: var(--sidebar-width); background: #2c3e50; color: white; padding: 20px; display: flex; flex-direction: column; gap: 10px; }
+        /* スマホ時はメニューを下に配置するレスポンシブ対応 */
+        @media (max-width: 768px) {
+            body { flex-direction: column; }
+            .sidebar { width: 100%; height: auto; flex-direction: row; padding: 10px; font-size: 12px; order: 2; overflow-x: auto; }
+            .sidebar h2 { display: none; }
+            .main-content { order: 1; padding: 20px; }
+        }
+
+        .main-content { flex-grow: 1; padding: 40px; overflow-y: auto; display: flex; flex-direction: column; align-items: center; }
+        .view-section { display: none; width: 100%; max-width: 600px; }
+        .view-section.active { display: flex; flex-direction: column; align-items: center; }
+
+        .flash-card { background: white; width: 100%; height: 250px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; margin-bottom: 20px; }
+        .flash-card .ko { font-size: 40px; font-weight: bold; }
+        .flash-card .ja { font-size: 24px; color: var(--primary-color); opacity: 0; margin-top: 15px; }
+        .flash-card.reveal .ja { opacity: 1; }
+
+        .word-table { width: 100%; background: white; border-collapse: collapse; }
+        .word-table td { padding: 10px; border-bottom: 1px solid #eee; }
+        input { padding: 12px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 10px; width: 100%; box-sizing: border-box; }
+        button { padding: 12px; border-radius: 8px; border: none; background: var(--primary-color); color: white; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <h2>単語帳 MENU</h2>
+        <button onclick="showView('study')" id="btn-study" class="active">学習</button>
+        <button onclick="showView('list')" id="btn-list">一覧</button>
+        <button onclick="exportCSV()">保存</button>
+        <button onclick="document.getElementById('csv-file').click()">読込</button>
+        <input type="file" id="csv-file" style="display:none" onchange="importCSV(this)">
+    </div>
+
+    <div class="main-content">
+        <div id="view-study" class="view-section active">
+            <div id="card-display" class="flash-card" onclick="this.classList.toggle('reveal')">
+                <div class="ko" id="study-ko">登録なし</div>
+                <div class="ja" id="study-ja"></div>
+            </div>
+            <div style="display:flex; gap:20px;">
+                <button onclick="prevCard()">←</button>
+                <button onclick="speakCurrent()">🔊</button>
+                <button onclick="nextCard()">→</button>
+            </div>
+            <p><span id="current-idx">0</span> / <span id="total-count">0</span></p>
+        </div>
+
+        <div id="view-list" class="view-section">
+            <input type="text" id="in-ko" placeholder="韓国語">
+            <input type="text" id="in-ja" placeholder="日本語">
+            <button id="submit-btn" onclick="handleSubmit()" style="width:100%; margin-bottom:20px;">追加</button>
+            <table class="word-table"><tbody id="list-body"></tbody></table>
+        </div>
+    </div>
+
+    <script>
+        // --- 以前のJavaScript（handleSubmit, updateCard, speak, CSV関連など）をここにそのまま入れる ---
+        // (短縮のため省略していますが、前回のスクリプトをそのまま貼り付けてください)
+        let words = JSON.parse(localStorage.getItem('myVocab')) || [];
+        let currentIndex = 0;
+        let editId = null;
+
+        function showView(view) {
+            document.querySelectorAll('.view-section').forEach(s => s.classList.remove('active'));
+            document.querySelectorAll('.sidebar button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`view-${view}`).classList.add('active');
+            document.getElementById(`btn-${view}`).classList.add('active');
+            if(view === 'study') updateCard();
+            if(view === 'list') renderList();
+        }
+        function handleSubmit() {
+            const ko = document.getElementById('in-ko').value.trim();
+            const ja = document.getElementById('in-ja').value.trim();
+            if (!ko || !ja) return;
+            if (editId) { words = words.map(w => w.id === editId ? { ...w, ko, ja } : w); exitEditMode(); } 
+            else { words.push({ ko, ja, id: Date.now() }); }
+            save(); renderList(); clearInputs();
+        }
+        function startEdit(id) {
+            const target = words.find(w => w.id === id);
+            editId = id;
+            document.getElementById('in-ko').value = target.ko;
+            document.getElementById('in-ja').value = target.ja;
+            document.getElementById('submit-btn').innerText = "更新";
+            window.scrollTo(0,0);
+        }
+        function exitEditMode() { editId = null; document.getElementById('submit-btn').innerText = "追加"; clearInputs(); }
+        function renderList() {
+            const body = document.getElementById('list-body');
+            body.innerHTML = words.map(w => `
+                <tr>
+                    <td><b>${w.ko}</b><br><small>${w.ja}</small></td>
+                    <td style="text-align:right;">
+                        <button onclick="speak('${w.ko}')">🔊</button>
+                        <button onclick="startEdit(${w.id})">✏️</button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+        function updateCard() {
+            const card = document.getElementById('card-display');
+            card.classList.remove('reveal');
+            if (words.length === 0) { document.getElementById('study-ko').innerText = "登録なし"; return; }
+            document.getElementById('study-ko').innerText = words[currentIndex].ko;
+            document.getElementById('study-ja').innerText = words[currentIndex].ja;
+            document.getElementById('current-idx').innerText = currentIndex + 1;
+            document.getElementById('total-count').innerText = words.length;
+        }
+        function nextCard() { if(words.length) { currentIndex = (currentIndex + 1) % words.length; updateCard(); } }
+        function prevCard() { if(words.length) { currentIndex = (currentIndex - 1 + words.length) % words.length; updateCard(); } }
+        function speakCurrent() { if(words[currentIndex]) speak(words[currentIndex].ko); }
+        function speak(text) { const uttr = new SpeechSynthesisUtterance(text); uttr.lang = 'ko-KR'; speechSynthesis.speak(uttr); }
+        function save() { localStorage.setItem('myVocab', JSON.stringify(words)); }
+        function clearInputs() { document.getElementById('in-ko').value = ""; document.getElementById('in-ja').value = ""; }
+        function exportCSV() {
+            let csv = "\uFEFF韓国語,日本語\n";
+            words.forEach(w => csv += `"${w.ko}","${w.ja}"\n`);
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv;charset=utf-8;'}));
+            link.download = "vocab.csv";
+            link.click();
+        }
+        function importCSV(input) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const rows = e.target.result.split("\n").slice(1);
+                rows.forEach(row => {
+                    const parts = row.split(",");
+                    if(parts.length >= 2) words.push({ ko: parts[0].replace(/"/g,'').trim(), ja: parts[1].replace(/"/g,'').trim(), id: Date.now()+Math.random() });
+                });
+                save(); renderList();
+            };
+            reader.readAsText(input.files[0]);
+        }
+        updateCard();
+    </script>
+</body>
+</html>
